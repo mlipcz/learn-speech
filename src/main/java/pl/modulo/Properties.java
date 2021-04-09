@@ -8,7 +8,7 @@ import java.io.InputStream;
 
 @Getter
 public class Properties {
-	private final String region, modelLanguage, sourceLanguage, destLanguage;
+	private final String region, modelLanguage, sourceLanguage, destLanguage, outputDirectory, longDelay, shortDelay, outputSoundFile;
 	private final int sentenceCount, voiceSpeed;
 
 	public Properties() throws IOException {
@@ -29,5 +29,9 @@ public class Properties {
 		this.destLanguage = prop.getProperty("destLanguage");
 		this.sentenceCount = Integer.parseInt(prop.getProperty("sentenceCount"));
 		this.voiceSpeed = Integer.parseInt(prop.getProperty("voiceSpeed"));
+		this.outputDirectory = prop.getProperty("outputDirectory");
+		this.longDelay = prop.getProperty("longDelay");
+		this.shortDelay = prop.getProperty("shortDelay");
+		this.outputSoundFile = prop.getProperty("outputSoundFile");
 	}
 }

@@ -33,58 +33,82 @@ import java.util.Random;
 
 @Slf4j
 public class VoiceFileProducer {
-
+	//TODO move patterns to a text file
 	final static String[] T2 = {"my", "your", "his", "our", "their"};
 	final static String[] T3 = {"father", "mother", "younger sister", "younger brother", "older sister", "older brother", "son", "daughter"};
 	private final Properties properties;
 	private final Translator translator;
 	private final AmazonPollyClient polly;
 	private final Voice voicePL, voiceZH;
+	private final String outputDirectory, outputWav;
 
-	public VoiceFileProducer(Properties properties) {
+	public VoiceFileProducer(Properties properties) throws IOException {
 		this.properties = properties;
 		Regions regions = Regions.fromName(properties.getRegion());
 		this.translator = new Translator(regions);
 
+		// TODO don't use deprecated methods
 		polly = new AmazonPollyClient(new DefaultAWSCredentialsProviderChain(), new ClientConfiguration());
 		polly.setRegion(Region.getRegion(regions));
 		DescribeVoicesRequest describeVoicesRequest = new DescribeVoicesRequest().withLanguageCode(properties.getDestLanguage());
 
 		DescribeVoicesResult describeVoicesResult = polly.describeVoices(describeVoicesRequest);
+		if (describeVoicesResult.getVoices().isEmpty()) {
+			throw new RuntimeException("No voices found for destination language " + properties.getDestLanguage());
+		}
 		voiceZH = describeVoicesResult.getVoices().get(0);
 
 		describeVoicesRequest = new DescribeVoicesRequest().withLanguageCode(properties.getSourceLanguage());
 		describeVoicesResult = polly.describeVoices(describeVoicesRequest);
+		if (describeVoicesResult.getVoices().isEmpty()) {
+			throw new RuntimeException("No voices found for source language " + properties.getSourceLanguage());
+		}
 		voicePL = describeVoicesResult.getVoices().get(0);
+
+		this.outputDirectory = Files.createTempDirectory("VoiceFileProducer").toString();
+		this.outputWav = this.outputDirectory + "/A000.wav";
 	}
 
 	public void generateVoiceFile() throws JavaLayerException, IOException, UnsupportedAudioFileException, EncoderException {
-		Converter myConverter = new Converter();
+		List<String> filenames = generateWavFiles();
+		mergeWavFiles(filenames);
+		deleteWavFiles(filenames);
+		toMp3();
+	}
+
+	private List<String> generateWavFiles() throws IOException, JavaLayerException {
+		Converter mp3ToWavConverter = new Converter();
 		Random rnd = new Random();
 		List<String> filenames = new ArrayList<>();
-		if (!new File("d:\\TMP\\silence.wav").exists()) {
-			myConverter.convert("d:\\TMP\\silence.mp3", "d:\\TMP\\silence.wav");
-		}
+		String longDelay = "<break time=\"" + properties.getLongDelay() + "\"/>";
+		String shortDelay = "<break time=\"" + properties.getShortDelay() + "\"/>";
+		String sourceLangShort = extractLowercase(this.properties.getSourceLanguage());
+		String destLangShort = extractLowercase(this.properties.getDestLanguage());
+		String modelLangShort = extractLowercase(this.properties.getModelLanguage());
 		for (int i = 0; i <= properties.getSentenceCount(); i++) {
 			String en = T2[rnd.nextInt(T2.length)] + " " + T3[rnd.nextInt(T3.length)] + "'s birthday is on " + (1 + rnd.nextInt(25)) + " " + new DateFormatSymbols(Locale.ENGLISH).getMonths()[rnd.nextInt(12)] + ".";
-			String pl = translator.translate(en, "en", "pl");
-			String zh = translator.translate(en, "en", "zh");
-			InputStream speechStreamZH = synthesize("<speak><prosody rate=\"" + properties.getVoiceSpeed() + "%\">" + zh + "</prosody></speak>", OutputFormat.Mp3, voiceZH);
-			InputStream speechStreamPL = synthesize("<speak>" + pl + "</speak>", OutputFormat.Mp3, voicePL);
-			String zhName = "D:/tmp/A" + i + "zh.mp3";
+			String pl = translator.translate(en, modelLangShort, sourceLangShort);
+			String zh = translator.translate(en, modelLangShort, destLangShort);
+			InputStream speechStreamZH = synthesize("<speak><prosody rate=\"" + properties.getVoiceSpeed() + "%\">" + zh + "</prosody>" + shortDelay + "</speak>", OutputFormat.Mp3, voiceZH);
+			InputStream speechStreamPL = synthesize("<speak>" + pl + longDelay + "</speak>", OutputFormat.Mp3, voicePL);
+			String zhName = outputDirectory + "A" + i + "zh.mp3";
 			Files.copy(speechStreamZH, new File(zhName).toPath(), StandardCopyOption.REPLACE_EXISTING);
-			String plName = "D:/tmp/A" + i + "pl.mp3";
+			String plName = outputDirectory + "A" + i + "pl.mp3";
 			Files.copy(speechStreamPL, new File(plName).toPath(), StandardCopyOption.REPLACE_EXISTING);
-			myConverter.convert(plName, plName + ".wav");
-			myConverter.convert(zhName, zhName + ".wav");
+			mp3ToWavConverter.convert(plName, plName + ".wav");
+			mp3ToWavConverter.convert(zhName, zhName + ".wav");
 
 			filenames.add(plName + ".wav");
-			filenames.add("d:\\TMP\\silence.wav");
 			filenames.add(zhName + ".wav");
-		}
 
-		mergeWavFiles(filenames);
-		toMp3();
+			new File(plName).delete();
+			new File(zhName).delete();
+		}
+		return filenames;
+	}
+
+	private String extractLowercase(String text) {
+		return text.replaceAll("[^a-z]", "");
 	}
 
 	private void mergeWavFiles(List<String> filenames) throws UnsupportedAudioFileException, IOException {
@@ -98,10 +122,15 @@ public class VoiceFileProducer {
 			audioBuild = new AudioInputStream(new SequenceInputStream(audioBuild, audio2), audioBuild.getFormat(), audioBuild.getFrameLength() + audio2.getFrameLength());
 		}
 
-		AudioSystem.write(audioBuild, AudioFileFormat.Type.WAVE, new File("d:/tmp/A000.wav"));
+		AudioSystem.write(audioBuild, AudioFileFormat.Type.WAVE, new File(outputWav));
 	}
 
-	public InputStream synthesize(String text, OutputFormat format, Voice voice) {
+	private void deleteWavFiles(List<String> filenames) {
+		filenames.forEach(s -> new File(s).delete());
+		filenames.clear();
+	}
+
+	private InputStream synthesize(String text, OutputFormat format, Voice voice) {
 		SynthesizeSpeechRequest synthReq = new SynthesizeSpeechRequest().withText(text).withTextType(TextType.Ssml).withVoiceId(voice.getId()).withOutputFormat(format);
 		SynthesizeSpeechResult synthRes = polly.synthesizeSpeech(synthReq);
 
@@ -109,8 +138,8 @@ public class VoiceFileProducer {
 	}
 
 	private void toMp3() throws EncoderException {
-		File source = new File("d:/tmp/A000.wav");
-		File target = new File("d:/tmp/A000.mp3");
+		File source = new File(outputWav);
+		File target = new File(properties.getOutputSoundFile());
 		AudioAttributes audio = new AudioAttributes();
 		audio.setCodec("libmp3lame");
 		audio.setBitRate(128000);
@@ -121,5 +150,6 @@ public class VoiceFileProducer {
 		attrs.setAudioAttributes(audio);
 		Encoder encoder = new Encoder();
 		encoder.encode(new MultimediaObject(source), target, attrs);
+		source.deleteOnExit();
 	}
 }
