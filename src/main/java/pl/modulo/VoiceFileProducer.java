@@ -25,19 +25,15 @@ import java.io.InputStream;
 import java.io.SequenceInputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
-import java.text.DateFormatSymbols;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-import java.util.Random;
 
 @Slf4j
 public class VoiceFileProducer {
-	//TODO move patterns to a text file
-	final static String[] T2 = {"my", "your", "his", "our", "their"};
-	final static String[] T3 = {"father", "mother", "younger sister", "younger brother", "older sister", "older brother", "son", "daughter"};
+
 	private final Properties properties;
 	private final Translator translator;
+	private final SentenceProducer sentenceProducer;
 	private final AmazonPollyClient polly;
 	private final Voice voicePL, voiceZH;
 	private final String outputDirectory, outputWav;
@@ -67,6 +63,8 @@ public class VoiceFileProducer {
 
 		this.outputDirectory = Files.createTempDirectory("VoiceFileProducer").toString();
 		this.outputWav = this.outputDirectory + "/A000.wav";
+
+		this.sentenceProducer = new SentenceProducer();
 	}
 
 	public void generateVoiceFile() throws JavaLayerException, IOException, UnsupportedAudioFileException, EncoderException {
@@ -74,19 +72,21 @@ public class VoiceFileProducer {
 		mergeWavFiles(filenames);
 		deleteWavFiles(filenames);
 		toMp3();
+		System.out.println("Generated file: " + this.outputWav);
 	}
 
 	private List<String> generateWavFiles() throws IOException, JavaLayerException {
 		Converter mp3ToWavConverter = new Converter();
-		Random rnd = new Random();
 		List<String> filenames = new ArrayList<>();
 		String longDelay = "<break time=\"" + properties.getLongDelay() + "\"/>";
 		String shortDelay = "<break time=\"" + properties.getShortDelay() + "\"/>";
 		String sourceLangShort = extractLowercase(this.properties.getSourceLanguage());
 		String destLangShort = extractLowercase(this.properties.getDestLanguage());
 		String modelLangShort = extractLowercase(this.properties.getModelLanguage());
+		if (destLangShort.equals("cmn")) // TODO make this mapping more general
+			destLangShort = "zh";
 		for (int i = 0; i <= properties.getSentenceCount(); i++) {
-			String en = T2[rnd.nextInt(T2.length)] + " " + T3[rnd.nextInt(T3.length)] + "'s birthday is on " + (1 + rnd.nextInt(25)) + " " + new DateFormatSymbols(Locale.ENGLISH).getMonths()[rnd.nextInt(12)] + ".";
+			String en = sentenceProducer.nextSentence();
 			String pl = translator.translate(en, modelLangShort, sourceLangShort);
 			String zh = translator.translate(en, modelLangShort, destLangShort);
 			InputStream speechStreamZH = synthesize("<speak><prosody rate=\"" + properties.getVoiceSpeed() + "%\">" + zh + "</prosody>" + shortDelay + "</speak>", OutputFormat.Mp3, voiceZH);

@@ -1,0 +1,1 @@
+(my|your|his|our|their) (father|mother|younger sister|younger brother|older sister|older brother|son|daughter)'s birthday is on (1-25) (MONTH).
